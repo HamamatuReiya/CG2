@@ -51,6 +51,23 @@ struct Transform {
 struct VertexData {
 	Vector4 position;
 	Vector2 texcoord;
+	Vector3 normal;
+};
+
+struct Material {
+	Vector4 color;
+	int32_t enableLighting;
+};
+
+struct TransfomationMatrix {
+	Matrix4x4 WVP;
+	Matrix4x4 World;
+};
+
+struct DirectionalLight {
+	Vector4 color;//< ライトの色
+	Vector3 direction;//!< ライトの向き
+	float intensity;//< 輝度
 };
 
 ID3D12Resource* CreateBufferResource(ID3D12Device* device, size_t sizeInBytes) {
@@ -366,6 +383,19 @@ ID3D12DescriptorHeap* CreateDescriptorHeap(
 	return descriptorHeap;
 }
 
+D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHendle(ID3D12DescriptorHeap* descriptorHeap, uint32_t descriptorSize, uint32_t index) {
+	D3D12_CPU_DESCRIPTOR_HANDLE handleCPU = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	handleCPU.ptr += (descriptorSize * index);
+	return handleCPU;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHendle(ID3D12DescriptorHeap* descriptorHeap, uint32_t descriptorSize, uint32_t index) {
+	D3D12_GPU_DESCRIPTOR_HANDLE handleGPU = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	handleGPU.ptr += (descriptorSize * index);
+	return handleGPU;
+}
+
+
 //ウィンドウプロシージャ
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg,
 	WPARAM wparam, LPARAM lparam) {
@@ -559,6 +589,9 @@ void UploadTextureData(ID3D12Resource* texture, const DirectX::ScratchImage& mip
 	}
 }
 
+bool useMonsterBall = true;
+
+//メインループ
 //Windowsアプリでエントリーポイント(main関数)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	WNDCLASS wc{};
@@ -743,8 +776,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//ディスクリプタヒールが作れなかったので起動できない
 	assert(SUCCEEDED(hr));
 
-
-
 	//SwapChainからResourceを引っ張ってくる
 	ID3D12Resource* swapChainResorces[2] = { nullptr };
 	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainResorces[0]));
@@ -771,9 +802,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	CoInitializeEx(0, COINIT_MULTITHREADED);
 
-
 	//DepthStencilTextureをウィンドウのサイズで作成
 	ID3D12Resource* depthStencilResource = CreateDepthStencilTextureResource(device, kClientWidth, kClientHeight);
+
+	//DescriptorSizeを取得しておく
+	const uint32_t desriptorSizeSRV = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	const uint32_t desriptorSizeRTV = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	const uint32_t desriptorSizeDSV = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
 	MSG msg{};
 
@@ -855,7 +890,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	hr = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
 	assert(SUCCEEDED(hr));
 	//InputLayout
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[2] = {};
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
 	inputElementDescs[0].SemanticName = "POSITION";
 	inputElementDescs[0].SemanticIndex = 0;
 	inputElementDescs[0].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -864,6 +899,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	inputElementDescs[1].SemanticIndex = 0;
 	inputElementDescs[1].Format = DXGI_FORMAT_R32G32_FLOAT;
 	inputElementDescs[1].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[2].SemanticName = "NORMAL";
+	inputElementDescs[2].SemanticIndex = 0;
+	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 	D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{};
 	inputLayoutDesc.pInputElementDescs = inputElementDescs;
 	inputLayoutDesc.NumElements = _countof(inputElementDescs);
@@ -881,7 +920,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 	//ResiterzerStateの設定
 	D3D12_RASTERIZER_DESC resterizerDesc{};
-
 
 	//裏面(時計回り)を表示しない
 	resterizerDesc.CullMode = D3D12_CULL_MODE_BACK;
@@ -963,17 +1001,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//1枚目の三角形
 	vertexDataSprite[0].position = { 0.0f,360.0f,0.0f,1.0f };//左下
 	vertexDataSprite[0].texcoord = { 0.0f,1.0f };
+	vertexDataSprite[0].normal = { 0.0f,0.0f,-1.0f };
 	vertexDataSprite[1].position = { 0.0f,0.0f,0.0f,1.0f };//左上
 	vertexDataSprite[1].texcoord = { 0.0f,0.0f };
+	vertexDataSprite[1].normal = { 0.0f,0.0f,-1.0f };
 	vertexDataSprite[2].position = { 640.0f,360.0f,0.0f,1.0f };//右下
 	vertexDataSprite[2].texcoord = { 1.0f,1.0f };
+	vertexDataSprite[2].normal = { 0.0f,0.0f,-1.0f };
+
 	//2枚目の三角形
 	vertexDataSprite[3].position = { 0.0f,0.0f,0.0f,1.0f };//左上
 	vertexDataSprite[3].texcoord = { 0.0f,0.0f };
+	vertexDataSprite[3].normal = { 0.0f,0.0f,-1.0f };
 	vertexDataSprite[4].position = { 640.0f,0.0f,0.0f,1.0f };//右上
 	vertexDataSprite[4].texcoord = { 1.0f,0.0f };
+	vertexDataSprite[4].normal = { 0.0f,0.0f,-1.0f };
 	vertexDataSprite[5].position = { 640.0f,360.0f,0.0f,1.0f };//右下
 	vertexDataSprite[5].texcoord = { 1.0f,1.0f };
+	vertexDataSprite[5].normal = { 0.0f,0.0f,-1.0f };
 
 	int vertex = 16 * 16 * 6;
 
@@ -1033,6 +1078,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			vertexData[startIndex].position.z = cos(lat) * sin(lon);
 			vertexData[startIndex].position.w = 1.0f;
 			vertexData[startIndex].texcoord = { float(lonIndex) / float(kSubdivision),1.0f - float(latIndex) / float(kSubdivision) };
+			vertexData[startIndex].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex].normal.z = vertexData[startIndex].position.z;
 
 			//B
 			vertexData[startIndex + 1].position.x = std::cos(lat + kLatEvery)* std::cos(lon);
@@ -1040,6 +1088,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			vertexData[startIndex + 1].position.z = std::cos(lat + kLatEvery) * std::sin(lon);
 			vertexData[startIndex + 1].position.w = 1.0f;
 			vertexData[startIndex + 1].texcoord = { float(lonIndex) / float(kSubdivision),1.0f - float(latIndex + 1) / float(kSubdivision) };
+			vertexData[startIndex + 1].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex + 1].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex + 1].normal.z = vertexData[startIndex].position.z;
 
 			//C
 			vertexData[startIndex + 2].position.x = std::cos(lat) * std::cos(lon + kLonEvery);
@@ -1047,6 +1098,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			vertexData[startIndex + 2].position.z = std::cos(lat) * std::sin(lon + kLonEvery);
 			vertexData[startIndex + 2].position.w = 1.0f;
 			vertexData[startIndex + 2].texcoord = { float(lonIndex + 1) / float(kSubdivision),1.0f - float(latIndex) / float(kSubdivision) };
+			vertexData[startIndex + 2].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex + 2].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex + 2].normal.z = vertexData[startIndex].position.z;
 
 			//C
 			vertexData[startIndex + 3].position.x = std::cos(lat) * std::cos(lon + kLonEvery);
@@ -1054,12 +1108,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			vertexData[startIndex + 3].position.z = std::cos(lat) * std::sin(lon + kLonEvery);
 			vertexData[startIndex + 3].position.w = 1.0f;
 			vertexData[startIndex + 3].texcoord = { float(lonIndex + 1) / float(kSubdivision),1.0f - float(latIndex) / float(kSubdivision) };
+			vertexData[startIndex + 3].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex + 3].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex + 3].normal.z = vertexData[startIndex].position.z;
+
 			//B
 			vertexData[startIndex + 4].position.x = std::cos(lat + kLatEvery) * std::cos(lon);
 			vertexData[startIndex + 4].position.y = std::sin(lat + kLatEvery);
 			vertexData[startIndex + 4].position.z = std::cos(lat + kLatEvery) * std::sin(lon);
 			vertexData[startIndex + 4].position.w = 1.0f;
 			vertexData[startIndex + 4].texcoord = { float(lonIndex) / float(kSubdivision),1.0f - float(latIndex + 1) / float(kSubdivision) };
+			vertexData[startIndex + 4].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex + 4].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex + 4].normal.z = vertexData[startIndex].position.z;
 
 			//D
 			vertexData[startIndex + 5].position.x = std::cos(lat + kLatEvery) * std::cos(lon + kLonEvery);
@@ -1067,6 +1128,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			vertexData[startIndex + 5].position.z = std::cos(lat + kLatEvery) * std::sin(lon + kLonEvery);
 			vertexData[startIndex + 5].position.w = 1.0f;
 			vertexData[startIndex + 5].texcoord = { float(lonIndex + 1) / float(kSubdivision),1.0f - float(latIndex + 1) / float(kSubdivision) };
+			vertexData[startIndex + 5].normal.x = vertexData[startIndex].position.x;
+			vertexData[startIndex + 5].normal.y = vertexData[startIndex].position.y;
+			vertexData[startIndex + 5].normal.z = vertexData[startIndex].position.z;
+
 		}
 	}
 
@@ -1097,6 +1162,26 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//SRVの生成
 	device->CreateShaderResourceView(textureResource, &srvDesc, textureSrvHandleCPU);
 
+
+	//2枚目のTextrureを読んで転送する
+	DirectX::ScratchImage mipImages2 = LoadTexture("resources/monsterBall.png");
+	const DirectX::TexMetadata& metadata2 = mipImages2.GetMetadata();
+	ID3D12Resource* textureResource2 = CreateTextureResource(device, metadata2);
+	UploadTextureData(textureResource2, mipImages2);
+
+	//metaDataをもとにSRVの設定
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc2{};
+	srvDesc2.Format = metadata2.format;
+	srvDesc2.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc2.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;//2Dテクスチャ
+	srvDesc2.Texture2D.MipLevels = UINT(metadata2.mipLevels);
+
+	//SRVを作成するDescriptorHeapの場所を決める
+	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandleCPU2 = GetCPUDescriptorHendle(srvDescriptorHeap,desriptorSizeSRV,2);
+	D3D12_GPU_DESCRIPTOR_HANDLE textureSrvHandleGPU2 = GetGPUDescriptorHendle(srvDescriptorHeap,desriptorSizeSRV,2);
+	//SRVの生成
+	device->CreateShaderResourceView(textureResource2, &srvDesc2, textureSrvHandleCPU2);
+
 #pragma endregion
 
 #pragma region マテリアル(色)
@@ -1104,12 +1189,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//マテリアル用のリソースを作る。今回はcolor1つ分のサイズを用意する
 	ID3D12Resource* materialResource = CreateBufferResource(device, sizeof(Vector4));
 	//マテリアルにデータを書き込む
-	Vector4* materialDeta = nullptr;
+	Vector4* materialData = nullptr;
 	//書き込むためのアドレスを取得
-	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialDeta));
+	materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
 	//今回は赤を書き込んでみる
-	*materialDeta = Vector4(1.0f, 1.0f, 1.0f, 0.0f);
+	*materialData = Vector4(1.0f, 1.0f, 1.0f, 0.0f);
 
+
+	ID3D12Resource* materialResourceSprite = CreateBufferResource(device, sizeof(Material));
+
+	Material* materialDataSprite = nullptr;
+
+	materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialDataSprite));
+
+	*materialDataSprite = Material(1.0f, 1.0f, 1.0f, 0.0f);
+
+	materialDataSprite->enableLighting = false;
 
 #pragma endregion
 
@@ -1174,7 +1269,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			DispatchMessage(&msg);
 		}
 		else {
-
+			
 #pragma region 更新処理
 
 			transform.rotate.y += 0.03f;
@@ -1202,7 +1297,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			ImGui::NewFrame();
 			//開発用の処理。実際に開発用のUIを出す場合ここをゲーム固有の処理に置き換える
 			ImGui::ShowDemoWindow();
-
+			ImGui::Checkbox("useMonsterBall", &useMonsterBall);
 			ImGui::Render();
 
 
@@ -1264,12 +1359,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 
 			//SRVのDescriptorTableの先頭を設定。2はrootParameter[2]である。
-			commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPU);
+			commandList->SetGraphicsRootDescriptorTable(2, useMonsterBall ? textureSrvHandleGPU2 : textureSrvHandleGPU);
 
 			// 形状を設定。ｐ50に設定してるものとはまた別。同じものを設定すると考える
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			// 描画!	（DrawCall/ドローコール)。3頂点で1つのインスタンス。
 			commandList->DrawInstanced(vertex, 1, 0, 0);
+
+			commandList->SetGraphicsRootDescriptorTable(2,textureSrvHandleGPU);
 
 			//Spriteの描画。
 			commandList->IASetVertexBuffers(0, 1, &vertexBufferViewSprite);//VBVを設定
