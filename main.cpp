@@ -1202,7 +1202,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialDataSprite));
 
-	*materialDataSprite = Material(1.0f, 1.0f, 1.0f, 0.0f);
+	materialDataSprite->color = Vector4(1.0f, 1.0f, 1.0f, 0.0f);
 
 	materialDataSprite->enableLighting = false;
 
